@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mirkobrombin/euprovguard/pkg/sbom"
-	"github.com/mirkobrombin/euprovguard/pkg/scanner"
-	"github.com/mirkobrombin/euprovguard/pkg/signature"
-	"github.com/mirkobrombin/euprovguard/pkg/vuln"
+	"github.com/fabricatorsltd/euprovguard/pkg/sbom"
+	"github.com/fabricatorsltd/euprovguard/pkg/scanner"
+	"github.com/fabricatorsltd/euprovguard/pkg/signature"
+	"github.com/fabricatorsltd/euprovguard/pkg/vuln"
 )
 
 // testdataDir is the path to the internal test fixtures.

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mirkobrombin/euprovguard/pkg/scanner"
+	"github.com/fabricatorsltd/euprovguard/pkg/scanner"
 )
 
 // CYCLONEDX_SPEC_VERSION is the CycloneDX specification version implemented.

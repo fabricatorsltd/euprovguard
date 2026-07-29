@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mirkobrombin/euprovguard/pkg/sbom"
-	"github.com/mirkobrombin/euprovguard/pkg/vuln"
+	"github.com/fabricatorsltd/euprovguard/pkg/sbom"
+	"github.com/fabricatorsltd/euprovguard/pkg/vuln"
 )
 
 // TEXT_LINE_WIDTH is the width of the text report page in characters.

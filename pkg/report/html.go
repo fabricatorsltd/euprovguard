@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mirkobrombin/euprovguard/pkg/sbom"
-	"github.com/mirkobrombin/euprovguard/pkg/vuln"
+	"github.com/fabricatorsltd/euprovguard/pkg/sbom"
+	"github.com/fabricatorsltd/euprovguard/pkg/vuln"
 )
 
 // HTML_TEMPLATE_NAME is the internal name of the parsed HTML template.

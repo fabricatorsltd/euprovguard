@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mirkobrombin/euprovguard/pkg/report"
-	"github.com/mirkobrombin/euprovguard/pkg/sbom"
-	"github.com/mirkobrombin/euprovguard/pkg/scanner"
-	"github.com/mirkobrombin/euprovguard/pkg/signature"
-	"github.com/mirkobrombin/euprovguard/pkg/vuln"
+	"github.com/fabricatorsltd/euprovguard/pkg/report"
+	"github.com/fabricatorsltd/euprovguard/pkg/sbom"
+	"github.com/fabricatorsltd/euprovguard/pkg/scanner"
+	"github.com/fabricatorsltd/euprovguard/pkg/signature"
+	"github.com/fabricatorsltd/euprovguard/pkg/vuln"
 )
 
 // Version is the EUProvGuard release version.

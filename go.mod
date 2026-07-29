@@ -1,4 +1,4 @@
-module github.com/mirkobrombin/euprovguard
+module github.com/fabricatorsltd/euprovguard
 
 go 1.22.1
 
