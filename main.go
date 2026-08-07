@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the EUProvGuard release version.
-const Version = "1.2.0"
+const Version = "1.2.1"
 
 // CRA_STANDARD identifies the CRA regulation version this build targets.
 const CRA_STANDARD = "Regulation (EU) 2024/2353"

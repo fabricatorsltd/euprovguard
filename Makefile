@@ -3,7 +3,7 @@
 # @standard ETSI EN 303 645 - secure build pipeline
 
 BINARY     = euprovguard
-VERSION    = 1.2.0
+VERSION    = 1.2.1
 MODULE     = euprovguard
 GO         = go
 GOFLAGS    = CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH)
