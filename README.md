@@ -62,6 +62,43 @@ make build-all
 | `-workers`       | `4`          | Parallel scanner workers                             |
 | `-version`       |              | Print version and exit                               |
 
+## Use as a library
+
+The whole pipeline is importable, so a build tool can produce the same SBOM and
+the same findings in process, without locating, versioning and trusting a
+separate binary.
+
+```go
+import "github.com/fabricatorsltd/euprovguard/pkg/engine"
+
+result, err := engine.Run(ctx, engine.Options{
+    Path:           "./",
+    ProjectName:    "my-service",
+    ProjectVersion: "1.4.0",
+    ToolVersion:    "my-tool/2.1",
+})
+if err != nil {
+    return err
+}
+
+if !result.Clean() {
+    // result.Vulnerabilities, result.SAST and result.Degraded say what happened.
+}
+```
+
+`Result.Clean()` is the check to gate a build on, and it is deliberately stricter
+than counting findings. Vulnerability matching, the CWE catalogue and the OWASP
+rule set all need the network, and a scan that could not reach them reports zero
+findings for a reason that is not "nothing is wrong". Those cases land in
+`Result.Degraded`, so an incomplete scan cannot be mistaken for a clean one.
+
+`Options.Offline` skips every network step and always marks the result degraded.
+`Options.Logf` and `Options.Warnf` receive progress and degradation as they
+happen; the CLI wires them to its own output.
+
+Writing files is left to the caller: `sbom.WriteJSON` and the `report` package
+take the document from `Result.BOM`.
+
 ## Supported Ecosystems
 
 | Language  | Manifests                                                                                 | PURL Type                        |
