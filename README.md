@@ -57,6 +57,7 @@ make build-all
 | `-text-report`   | ``           | Plain-text report path                               |
 | `-bundle`        | ``           | Base path for all report formats (.html, .txt)       |
 | `-sast`          | `true`       | Enable native SAST engine (CRS-enhanced)             |
+| `-baseline`      | ``           | File of accepted SAST findings (default: `.euprovguard-baseline.json`) |
 | `-verify`        | `false`      | Verify mode (requires `-input`, `-pubkey`)           |
 | `-input`         | ``           | Signed SBOM to verify                                |
 | `-workers`       | `4`          | Parallel scanner workers                             |
@@ -122,6 +123,42 @@ heavy dependency folders (node_modules, venv, target, etc.).
 It integrates directly with:
 - **OWASP Core Rule Set (CRS):** Dynamically fetched patterns for enterprise-grade security checks.
 - **MITRE CWE:** Findings are mapped to the Common Weakness Enumeration for CRA technical documentation.
+
+Each finding in the SBOM names its rule, file and line in `properties`
+(`euprovguard:sast:rule`, `euprovguard:sast:file`, `euprovguard:sast:line`), with the
+file relative to the project root.
+
+### Accepting a finding
+
+A finding that has been reviewed and accepted can be suppressed with a comment on its
+line, or on a comment line right above it:
+
+```c
+strcpy(buffer, "fixed"); // euprovguard:ignore MEM-001 the buffer holds 64 bytes
+```
+
+The rule may be a comma separated list, or `all`. The text after it is the reason.
+
+Findings can also be accepted in `.euprovguard-baseline.json` at the project root, or in
+the file `-baseline` names. An entry matches the rule, the file and the trimmed text of
+the line, so it keeps matching when other lines of the file move:
+
+```json
+{
+  "sast": [
+    {
+      "rule": "MEM-001",
+      "file": "src/crt/string.c",
+      "line": "strcpy(to + strlen(to), from);",
+      "reason": "strcat has the same unbounded contract as the function it implements."
+    }
+  ]
+}
+```
+
+Every entry needs a reason. Leaving `line` out accepts every finding of the rule in that
+file. Accepted findings are left out of the SBOM and of the totals; the log reports how
+many there were.
 
 ## eIDAS QES & Legal Attribution
 

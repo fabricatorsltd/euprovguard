@@ -43,6 +43,9 @@ type Options struct {
 	Workers int
 	// DisableSAST skips the native static analysis pass.
 	DisableSAST bool
+	// BaselinePath names a file of accepted SAST findings. Empty uses
+	// scanner.BaselineFile at the project root when it exists.
+	BaselinePath string
 	// Offline skips every network step: no OSV or EUVD queries, no CWE
 	// catalogue, no OWASP rule set. The result is marked degraded, because
 	// an offline scan cannot report vulnerabilities disclosed since the
@@ -72,6 +75,9 @@ type Result struct {
 	Vulnerabilities []vuln.Finding
 	// SAST holds the native static analysis findings.
 	SAST []scanner.Finding
+	// SuppressedSAST holds the findings an inline comment or the baseline
+	// accepted, each with its reason. They are not counted by Total.
+	SuppressedSAST []scanner.Finding
 	// SeverityCounts summarises Vulnerabilities by severity name.
 	SeverityCounts map[string]int
 	// EUVD is the ENISA snapshot used, when the query succeeded.
@@ -199,7 +205,21 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		result.SAST = scanner.RunSAST(root, opts.Workers, extraRules)
+		baselinePath := opts.BaselinePath
+		if baselinePath == "" {
+			if _, err := os.Stat(filepath.Join(root, scanner.BaselineFile)); err == nil {
+				baselinePath = filepath.Join(root, scanner.BaselineFile)
+			}
+		}
+		var baseline []scanner.Suppression
+		if baselinePath != "" {
+			loaded, err := scanner.LoadBaseline(baselinePath)
+			if err != nil {
+				return nil, fmt.Errorf("engine: %w", err)
+			}
+			baseline = loaded
+		}
+		result.SAST, result.SuppressedSAST = scanner.ScanSAST(root, opts.Workers, extraRules, baseline)
 	}
 
 	// 5. Build the document and attach everything found to it.
