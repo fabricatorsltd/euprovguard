@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -19,6 +20,10 @@ type SASTRule struct {
 	CWEs        []int
 	Extensions  []string // e.g., ".go", ".c", ".sh", or "*" for all
 	Pattern     *regexp.Regexp
+	// Accept, when set, decides whether one match of Pattern is a finding.
+	// match holds the submatch indexes of that match in line, and local
+	// names the functions the file defines or imports itself.
+	Accept func(line string, match []int, local map[string]bool) bool
 }
 
 // Finding represents a vulnerability found in the codebase.
@@ -31,11 +36,25 @@ type Finding struct {
 	Line        int
 	Severity    string
 	CWEs        []int
+	// Text is the trimmed source line, which a baseline entry matches.
+	Text string
+	// Suppressed is the reason given for an accepted finding, empty for an
+	// open one.
+	Suppressed string
 }
 
 // RunSAST scans the root directory for security vulnerabilities.
 // It skips binaries, hidden files, and patterns in .gitignore.
 func RunSAST(root string, workers int, extraRules []SASTRule) []Finding {
+	findings, _ := ScanSAST(root, workers, extraRules, nil)
+	return findings
+}
+
+// ScanSAST is RunSAST with suppressions: a finding whose line carries an
+// "euprovguard:ignore RULE reason" comment, or follows a comment line that
+// carries one, or that a baseline entry matches, comes back in suppressed instead of findings.
+// File paths are relative to root, with forward slashes.
+func ScanSAST(root string, workers int, extraRules []SASTRule, baseline []Suppression) (findings, suppressed []Finding) {
 	log.Printf("[INFO] Starting native SAST engine...")
 	rules := GetEmbeddedRules()
 	if len(extraRules) > 0 {
@@ -125,7 +144,6 @@ func RunSAST(root string, workers int, extraRules []SASTRule) []Finding {
 	close(jobCh)
 
 	var mu sync.Mutex
-	var findings []Finding
 	var wg sync.WaitGroup
 	var scanned int
 
@@ -147,14 +165,28 @@ func RunSAST(root string, workers int, extraRules []SASTRule) []Finding {
 				}
 
 				fileFindings := scanFile(path, activeRules)
+				relative, err := filepath.Rel(root, path)
+				if err != nil {
+					relative = path
+				}
+				for i := range fileFindings {
+					fileFindings[i].File = filepath.ToSlash(relative)
+				}
 
 				mu.Lock()
 				scanned++
 				if scanned%100 == 0 || scanned == totalFiles {
 					log.Printf("[INFO] SAST progress: %d/%d files scanned", scanned, totalFiles)
 				}
-				if len(fileFindings) > 0 {
-					findings = append(findings, fileFindings...)
+				for _, finding := range fileFindings {
+					if finding.Suppressed == "" {
+						finding.Suppressed = matchBaseline(baseline, finding)
+					}
+					if finding.Suppressed != "" {
+						suppressed = append(suppressed, finding)
+					} else {
+						findings = append(findings, finding)
+					}
 				}
 				mu.Unlock()
 			}
@@ -162,8 +194,28 @@ func RunSAST(root string, workers int, extraRules []SASTRule) []Finding {
 	}
 	wg.Wait()
 
+	sortFindings(findings)
+	sortFindings(suppressed)
 	log.Printf("[INFO] Native SAST completed: found %d issues", len(findings))
-	return findings
+	if len(suppressed) > 0 {
+		log.Printf("[INFO] SAST: %d findings suppressed", len(suppressed))
+	}
+	return findings, suppressed
+}
+
+// sortFindings orders findings by file, line and rule, so that two scans of
+// the same tree number them the same way whatever the worker scheduling.
+func sortFindings(findings []Finding) {
+	sort.Slice(findings, func(i, j int) bool {
+		a, b := findings[i], findings[j]
+		if a.File != b.File {
+			return a.File < b.File
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		return a.RuleID < b.RuleID
+	})
 }
 
 func scanFile(path string, rules []SASTRule) []Finding {
@@ -173,45 +225,164 @@ func scanFile(path string, rules []SASTRule) []Finding {
 	}
 	defer f.Close()
 
-	var findings []Finding
+	var lines []string
 	scanner := bufio.NewScanner(f)
-	lineNum := 1
-
+	scanner.Buffer(make([]byte, 64*1024), 6*1024*1024)
 	for scanner.Scan() {
-		line := scanner.Text()
+		lines = append(lines, scanner.Text())
+	}
+	local := localDefinitions(path, lines)
+
+	var findings []Finding
+	for index, line := range lines {
 		if len(line) > 2048 { // Skip minified/huge lines to prevent regex lockup
-			lineNum++
 			continue
 		}
 
 		// Skip comment-only lines to reduce false positives
 		trimmed := strings.TrimSpace(line)
 		if isCommentLine(trimmed, path) {
-			lineNum++
 			continue
 		}
 
 		for _, rule := range rules {
-			if rule.Pattern.MatchString(line) {
-				// Only report CRITICAL and HIGH severity to avoid false positive noise
-				if rule.Severity != "critical" && rule.Severity != "high" {
-					continue
-				}
-
-				findings = append(findings, Finding{
-					ToolName:    "EUProvGuard-Native-SAST",
-					RuleID:      rule.ID,
-					Description: rule.Name + ": " + rule.Description,
-					File:        path,
-					Line:        lineNum,
-					Severity:    rule.Severity,
-					CWEs:        rule.CWEs,
-				})
+			// Only report CRITICAL and HIGH severity to avoid false positive noise
+			if rule.Severity != "critical" && rule.Severity != "high" {
+				continue
 			}
+			if !ruleMatches(rule, line, local) {
+				continue
+			}
+			finding := Finding{
+				ToolName:    "EUProvGuard-Native-SAST",
+				RuleID:      rule.ID,
+				Description: rule.Name + ": " + rule.Description,
+				File:        path,
+				Line:        index + 1,
+				Severity:    rule.Severity,
+				CWEs:        rule.CWEs,
+				Text:        trimmed,
+			}
+			finding.Suppressed = inlineSuppression(line, rule.ID)
+			// A comment of its own on the line above covers this line too.
+			if finding.Suppressed == "" && index > 0 {
+				if previous := strings.TrimSpace(lines[index-1]); previous != "" && isCommentLine(previous, path) {
+					finding.Suppressed = inlineSuppression(previous, rule.ID)
+				}
+			}
+			findings = append(findings, finding)
 		}
-		lineNum++
 	}
 	return findings
+}
+
+// ruleMatches reports whether any match of the rule in line is a finding.
+func ruleMatches(rule SASTRule, line string, local map[string]bool) bool {
+	if rule.Accept == nil {
+		return rule.Pattern.MatchString(line)
+	}
+	for _, match := range rule.Pattern.FindAllStringSubmatchIndex(line, -1) {
+		if rule.Accept(line, match, local) {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	pythonDefinition = regexp.MustCompile(`^\s*(?:async\s+)?def\s+(\w+)\s*\(`)
+	pythonImport     = regexp.MustCompile(`^\s*from\s+\S+\s+import\s+\(?([\w\s,]+)\)?`)
+	pythonAlias      = regexp.MustCompile(`^(\w+)(?:\s+as\s+(\w+))?$`)
+)
+
+// localDefinitions names the functions a Python file defines or imports
+// itself, which shadow the builtins of the same name.
+func localDefinitions(path string, lines []string) map[string]bool {
+	if strings.ToLower(filepath.Ext(path)) != ".py" {
+		return nil
+	}
+	local := make(map[string]bool)
+	for _, line := range lines {
+		if match := pythonDefinition.FindStringSubmatch(line); match != nil {
+			local[match[1]] = true
+		} else if match := pythonImport.FindStringSubmatch(line); match != nil {
+			for _, name := range strings.Split(match[1], ",") {
+				if alias := pythonAlias.FindStringSubmatch(strings.TrimSpace(name)); alias != nil {
+					if alias[2] != "" {
+						local[alias[2]] = true
+					} else {
+						local[alias[1]] = true
+					}
+				}
+			}
+		}
+	}
+	return local
+}
+
+// acceptPythonBuiltin takes a call of eval, exec or compile only when it is
+// the builtin: not a method such as re.compile, not the definition of a
+// function of that name, and not a call of a local function that shadows it.
+func acceptPythonBuiltin(line string, match []int, local map[string]bool) bool {
+	start := match[0]
+	name := line[match[2]:match[3]]
+	before := strings.TrimRight(line[:start], " \t")
+	if strings.HasSuffix(before, ".") {
+		return false
+	}
+	if before == "def" || strings.HasSuffix(before, " def") || strings.HasSuffix(before, "\tdef") {
+		return false
+	}
+	return !local[name]
+}
+
+// acceptCall takes a C function name followed by a parenthesis only when it
+// is a call: the declaration or definition of the function itself, as in a C
+// runtime that implements it, puts a type right before the name.
+func acceptCall(line string, match []int, _ map[string]bool) bool {
+	before := strings.TrimRight(line[:match[0]], " \t")
+	if before == "" {
+		return true
+	}
+	last := before[len(before)-1]
+	if last == '*' {
+		// "char *strcpy(" declares; "a * sprintf(" multiplies, which C does not do with an int and a call result often enough to matter.
+		return false
+	}
+	if !(last == '_' || (last >= 'a' && last <= 'z') || (last >= 'A' && last <= 'Z') || (last >= '0' && last <= '9')) {
+		return true
+	}
+	word := before
+	if space := strings.LastIndexAny(before, " \t(),;=!&|?:{}"); space >= 0 {
+		word = before[space+1:]
+	}
+	switch word {
+	case "return", "else", "do", "case", "sizeof", "typeof", "throw", "co_return", "co_yield":
+		return true
+	}
+	return false
+}
+
+var inlineIgnore = regexp.MustCompile(`euprovguard:ignore\s+([A-Za-z0-9_,\-]+)\s*(.*)`)
+
+// inlineSuppression returns the reason an "euprovguard:ignore RULE reason"
+// comment in line gives for the rule, empty when it gives none. RULE may be a
+// comma separated list, or "all".
+func inlineSuppression(line, rule string) string {
+	match := inlineIgnore.FindStringSubmatch(line)
+	if match == nil {
+		return ""
+	}
+	for _, name := range strings.Split(match[1], ",") {
+		if strings.EqualFold(name, rule) || strings.EqualFold(name, "all") {
+			reason := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(match[2]), "*/"))
+			if reason == "" {
+				reason = "suppressed inline"
+			}
+			return reason
+		}
+	}
+	return ""
 }
 
 // isCommentLine checks if a line is a comment.

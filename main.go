@@ -44,6 +44,8 @@ type Config struct {
 	BundlePath string
 	// EnableSAST enables the native static analysis engine.
 	EnableSAST bool
+	// BaselinePath names the file of accepted SAST findings.
+	BaselinePath string
 	// Sign enables SBOM signing.
 	Sign bool
 	// Verify enables verification mode.
@@ -82,6 +84,7 @@ func parseFlags() Config {
 	flag.StringVar(&cfg.TextReportPath, "text-report", "", "Plain-text compliance report output path")
 	flag.StringVar(&cfg.BundlePath, "bundle", "", "Base path for all report formats (.html, .txt)")
 	flag.BoolVar(&cfg.EnableSAST, "sast", true, "Enable native SAST engine for proprietary code")
+	flag.StringVar(&cfg.BaselinePath, "baseline", "", "File of accepted SAST findings (default: .euprovguard-baseline.json at the project root)")
 	flag.BoolVar(&cfg.Sign, "sign", false, "Sign SBOM (QES if backed by QSCD and Qualified Certificate)")
 	flag.BoolVar(&cfg.Verify, "verify", false, "Verify signed SBOM (requires -input and -pubkey)")
 	flag.StringVar(&cfg.Input, "input", "", "Signed SBOM file to verify")
@@ -127,6 +130,7 @@ func runGenerate(cfg Config) {
 		ToolVersion:    Version,
 		Workers:        cfg.Workers,
 		DisableSAST:    !cfg.EnableSAST,
+		BaselinePath:   cfg.BaselinePath,
 		Logf:           func(format string, args ...any) { log.Printf("[INFO] "+format, args...) },
 		Warnf:          func(format string, args ...any) { log.Printf("[WARN] "+format, args...) },
 	})

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,6 +117,15 @@ type Vulnerability struct {
 	Analysis *VulnAnalysis `json:"analysis,omitempty"`
 	// Affects links the vulnerability to specific BOM components.
 	Affects []VulnAffect `json:"affects,omitempty"`
+	// Properties carry machine readable details, such as the rule, file and
+	// line of a SAST finding.
+	Properties []Property `json:"properties,omitempty"`
+}
+
+// Property is a CycloneDX name and value pair.
+type Property struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // VulnSource describes the origin of the vulnerability information.
@@ -252,6 +262,11 @@ func AddSASTFinding(bom *BOM, id, tool, rule, description, file string, line int
 			State: "in_triage",
 		},
 		Affects: []VulnAffect{{Ref: "project"}},
+		Properties: []Property{
+			{Name: "euprovguard:sast:rule", Value: rule},
+			{Name: "euprovguard:sast:file", Value: file},
+			{Name: "euprovguard:sast:line", Value: strconv.Itoa(line)},
+		},
 	}
 	bom.Vulnerabilities = append(bom.Vulnerabilities, v)
 }
