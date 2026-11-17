@@ -263,7 +263,7 @@ func scanFile(path string, rules []SASTRule) []Finding {
 				CWEs:        rule.CWEs,
 				Text:        trimmed,
 			}
-			finding.Suppressed = inlineSuppression(line, rule.ID)
+			finding.Suppressed = inlineSuppression(sourceComment(line, path), rule.ID)
 			// A comment of its own on the line above covers this line too.
 			if finding.Suppressed == "" && index > 0 {
 				if previous := strings.TrimSpace(lines[index-1]); previous != "" && isCommentLine(previous, path) {
@@ -303,9 +303,15 @@ func localDefinitions(path string, lines []string) map[string]bool {
 	}
 	local := make(map[string]bool)
 	for _, line := range lines {
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			continue
+		}
 		if match := pythonDefinition.FindStringSubmatch(line); match != nil {
 			local[match[1]] = true
 		} else if match := pythonImport.FindStringSubmatch(line); match != nil {
+			if strings.HasPrefix(strings.TrimSpace(line), "from builtins import ") {
+				continue
+			}
 			for _, name := range strings.Split(match[1], ",") {
 				if alias := pythonAlias.FindStringSubmatch(strings.TrimSpace(name)); alias != nil {
 					if alias[2] != "" {
@@ -328,7 +334,7 @@ func acceptPythonBuiltin(line string, match []int, local map[string]bool) bool {
 	name := line[match[2]:match[3]]
 	before := strings.TrimRight(line[:start], " \t")
 	if strings.HasSuffix(before, ".") {
-		return false
+		return before == "builtins." || strings.HasSuffix(before, " builtins.") || strings.HasSuffix(before, "=builtins.")
 	}
 	if before == "def" || strings.HasSuffix(before, " def") || strings.HasSuffix(before, "\tdef") {
 		return false
@@ -336,31 +342,32 @@ func acceptPythonBuiltin(line string, match []int, local map[string]bool) bool {
 	return !local[name]
 }
 
-// acceptCall takes a C function name followed by a parenthesis only when it
-// is a call: the declaration or definition of the function itself, as in a C
-// runtime that implements it, puts a type right before the name.
-func acceptCall(line string, match []int, _ map[string]bool) bool {
-	before := strings.TrimRight(line[:match[0]], " \t")
-	if before == "" {
-		return true
+// sourceComment skips quoted text before looking for a suppression comment.
+func sourceComment(line, path string) string {
+	var quote byte
+	python := strings.ToLower(filepath.Ext(path)) == ".py"
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if quote != 0 {
+			if c == '\\' {
+				i++
+			} else if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		if c == '\'' || c == '"' || c == '`' {
+			quote = c
+			continue
+		}
+		if python && c == '#' {
+			return line[i:]
+		}
+		if !python && c == '/' && i+1 < len(line) && (line[i+1] == '/' || line[i+1] == '*') {
+			return line[i:]
+		}
 	}
-	last := before[len(before)-1]
-	if last == '*' {
-		// "char *strcpy(" declares; "a * sprintf(" multiplies, which C does not do with an int and a call result often enough to matter.
-		return false
-	}
-	if !(last == '_' || (last >= 'a' && last <= 'z') || (last >= 'A' && last <= 'Z') || (last >= '0' && last <= '9')) {
-		return true
-	}
-	word := before
-	if space := strings.LastIndexAny(before, " \t(),;=!&|?:{}"); space >= 0 {
-		word = before[space+1:]
-	}
-	switch word {
-	case "return", "else", "do", "case", "sizeof", "typeof", "throw", "co_return", "co_yield":
-		return true
-	}
-	return false
+	return ""
 }
 
 var inlineIgnore = regexp.MustCompile(`euprovguard:ignore\s+([A-Za-z0-9_,\-]+)\s*(.*)`)
@@ -377,7 +384,7 @@ func inlineSuppression(line, rule string) string {
 		if strings.EqualFold(name, rule) || strings.EqualFold(name, "all") {
 			reason := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(match[2]), "*/"))
 			if reason == "" {
-				reason = "suppressed inline"
+				return ""
 			}
 			return reason
 		}

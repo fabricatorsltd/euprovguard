@@ -16,7 +16,7 @@ import (
 )
 
 // Version is the EUProvGuard release version.
-const Version = "1.2.1"
+const Version = "1.3.0"
 
 // CRA_STANDARD identifies the CRA regulation version this build targets.
 const CRA_STANDARD = "Regulation (EU) 2024/2353"
@@ -46,6 +46,8 @@ type Config struct {
 	EnableSAST bool
 	// BaselinePath names the file of accepted SAST findings.
 	BaselinePath string
+	// FailOnFindings makes open findings or an incomplete scan fail the command.
+	FailOnFindings bool
 	// Sign enables SBOM signing.
 	Sign bool
 	// Verify enables verification mode.
@@ -68,7 +70,7 @@ func main() {
 		return
 	}
 
-	runGenerate(cfg)
+	os.Exit(runGenerate(cfg))
 }
 
 // parseFlags parses command-line flags into a Config.
@@ -83,6 +85,7 @@ func parseFlags() Config {
 	flag.StringVar(&cfg.ReportPath, "report", "", "HTML compliance report output path")
 	flag.StringVar(&cfg.TextReportPath, "text-report", "", "Plain-text compliance report output path")
 	flag.StringVar(&cfg.BundlePath, "bundle", "", "Base path for all report formats (.html, .txt)")
+	flag.BoolVar(&cfg.FailOnFindings, "fail-on-findings", false, "Exit 1 on open CVE/SAST findings or an incomplete scan")
 	flag.BoolVar(&cfg.EnableSAST, "sast", true, "Enable native SAST engine for proprietary code")
 	flag.StringVar(&cfg.BaselinePath, "baseline", "", "File of accepted SAST findings (default: .euprovguard-baseline.json at the project root)")
 	flag.BoolVar(&cfg.Sign, "sign", false, "Sign SBOM (QES if backed by QSCD and Qualified Certificate)")
@@ -117,7 +120,7 @@ func parseFlags() Config {
 // runGenerate executes the full SBOM generation pipeline.
 // It scans all ecosystems, matches vulnerabilities, generates a [CycloneDX 1.6]
 // SBOM, signs it with [QES], and optionally produces compliance reports.
-func runGenerate(cfg Config) {
+func runGenerate(cfg Config) int {
 	log.Printf("[INFO] EUProvGuard v%s - scanning %s", Version, cfg.Path)
 
 	// The pipeline lives in pkg/engine so that other tools can run exactly
@@ -219,6 +222,7 @@ func runGenerate(cfg Config) {
 			EuvdSnapshot:   euvdSnap,
 			LiveMode:       true,
 			SASTFindings:   sastFindings,
+			SuppressedSAST: result.SuppressedSAST,
 			SASTMetadata:   sastMeta,
 		}
 		if err := report.WriteHTMLReport(rd, cfg.ReportPath); err != nil {
@@ -237,6 +241,10 @@ func runGenerate(cfg Config) {
 	// 10. Summary.
 	log.Printf("[INFO] ✓ SBOM: %s | Components: %d | CVEs: %d | Signed: %v",
 		cfg.Output, len(bom.Components), len(findings), signed)
+	if cfg.FailOnFindings && !result.Clean() {
+		return 1
+	}
+	return 0
 }
 
 // runVerify verifies a signed SBOM document using the provided public key.

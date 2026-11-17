@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fabricatorsltd/euprovguard/pkg/sbom"
+	"github.com/fabricatorsltd/euprovguard/pkg/scanner"
 	"github.com/fabricatorsltd/euprovguard/pkg/vuln"
 )
 
@@ -43,6 +44,8 @@ type ReportData struct {
 	LiveMode bool
 	// SASTFindings holds code security findings from static analysis.
 	SASTFindings interface{} // []scanner.Finding
+	// SuppressedSAST lists accepted findings with their reasons.
+	SuppressedSAST []scanner.Finding
 	// SASTMetadata describes which SAST rules were executed.
 	SASTMetadata SASTMetadata
 }
@@ -213,6 +216,15 @@ const htmlReportTmpl = `<!DOCTYPE html>
     <td>{{range .CWEs}}{{if not (eq . 0)}}<a href="https://cwe.mitre.org/data/definitions/{{.}}.html" target="_blank">CWE-{{.}}</a><br>{{end}}{{end}}</td>
     <td>{{.Description}}</td>
   </tr>
+  {{end}}
+</table>
+{{end}}
+{{if .SuppressedSAST}}
+<p><strong>Accepted SAST findings: {{len .SuppressedSAST}}</strong></p>
+<table>
+  <tr><th>File</th><th>Line</th><th>Rule</th><th>Status</th><th>Reason</th></tr>
+  {{range .SuppressedSAST}}
+  <tr><td>{{.File}}</td><td>{{.Line}}</td><td>{{.RuleID}}</td><td>Accepted</td><td>{{.Suppressed}}</td></tr>
   {{end}}
 </table>
 {{end}}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fabricatorsltd/euprovguard/pkg/scanner"
@@ -126,5 +127,43 @@ func TestMergeDependenciesKeepsTheStrongerClaim(t *testing.T) {
 func TestScanManifestRejectsAnUnknownEcosystem(t *testing.T) {
 	if _, err := ScanManifest("brainfuck", "go.mod"); err == nil {
 		t.Fatal("an unknown ecosystem must be an error")
+	}
+}
+
+func TestRunPreservesAcceptedFindings(t *testing.T) {
+	root := writeModule(t)
+	for name, text := range map[string]string{
+		"a.c":                "\nstrcpy(a, b);\nstrcpy(a, user_input);\n",
+		scanner.BaselineFile: `{"sast":[{"rule":"MEM-001","file":"a.c","line":"strcpy(a, b);","reason":"bounded source"},{"rule":"MEM-002","file":"removed.c","line":"sprintf(a, b);","reason":"obsolete"}]}`,
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var warnings []string
+	result, err := Run(context.Background(), Options{Path: root, Offline: true, Workers: 1,
+		Warnf: func(format string, args ...any) { warnings = append(warnings, format) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total() != 1 || len(result.SuppressedSAST) != 1 || len(result.UnusedSuppressions) != 1 || len(result.BOM.Vulnerabilities) != 2 {
+		t.Fatalf("unexpected findings: %+v", result)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "unused SAST suppression") {
+		t.Fatalf("unused baseline not warned: %v", warnings)
+	}
+	accepted := result.BOM.Vulnerabilities[1]
+	if accepted.Analysis.Detail != "bounded source" || accepted.Analysis.State != "in_triage" || accepted.Analysis.Response[0] != "will_not_fix" {
+		t.Fatalf("acceptance lost or marked fixed: %+v", accepted)
+	}
+	found := false
+	for _, property := range accepted.Properties {
+		if property.Name == "euprovguard:sast:status" && property.Value == "accepted" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("SBOM has no accepted status")
 	}
 }

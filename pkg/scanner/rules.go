@@ -52,7 +52,6 @@ func GetEmbeddedRules() []SASTRule {
 			CWEs:        []int{120, 119},
 			Extensions:  []string{".c", ".cpp", ".h", ".hpp"},
 			Pattern:     regexp.MustCompile(`\bstrcpy\s*\(`),
-			Accept:      acceptCall,
 		},
 		{
 			ID:          "MEM-002",
@@ -62,7 +61,6 @@ func GetEmbeddedRules() []SASTRule {
 			CWEs:        []int{120, 119},
 			Extensions:  []string{".c", ".cpp", ".h", ".hpp"},
 			Pattern:     regexp.MustCompile(`\bsprintf\s*\(`),
-			Accept:      acceptCall,
 		},
 		{
 			ID:          "MEM-003",
@@ -103,7 +101,7 @@ func GetEmbeddedRules() []SASTRule {
 			Severity:    "critical",
 			CWEs:        []int{94},
 			Extensions:  []string{".py"},
-			Pattern:     regexp.MustCompile(`\b(eval|exec|compile)\s*\([^)]*\)`),
+			Pattern:     regexp.MustCompile(`\b(eval|exec|compile)\s*\(`),
 			Accept:      acceptPythonBuiltin,
 		},
 	}

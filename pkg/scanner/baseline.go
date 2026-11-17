@@ -19,9 +19,8 @@ type Suppression struct {
 	Rule string `json:"rule"`
 	// File is the path relative to the project root, with forward slashes.
 	File string `json:"file"`
-	// Line is the trimmed text of the source line. Empty accepts every
-	// finding of the rule in the file.
-	Line string `json:"line,omitempty"`
+	// Line is the trimmed text of the source line.
+	Line string `json:"line"`
 	// Reason says why the finding is accepted. It is required.
 	Reason string `json:"reason"`
 }
@@ -43,10 +42,14 @@ func LoadBaseline(path string) ([]Suppression, error) {
 		return nil, fmt.Errorf("baseline %s: %w", path, err)
 	}
 	for index, entry := range baseline.SAST {
-		if entry.Rule == "" || entry.File == "" || strings.TrimSpace(entry.Reason) == "" {
-			return nil, fmt.Errorf("baseline %s: entry %d needs a rule, a file and a reason", path, index+1)
+		if strings.TrimSpace(entry.Rule) == "" || entry.File == "" || strings.TrimSpace(entry.Line) == "" || strings.TrimSpace(entry.Reason) == "" {
+			return nil, fmt.Errorf("baseline %s: entry %d needs a rule, a file, line text and a reason", path, index+1)
 		}
-		baseline.SAST[index].File = filepath.ToSlash(entry.File)
+		clean := filepath.Clean(entry.File)
+		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("baseline %s: entry %d needs a project-relative file", path, index+1)
+		}
+		baseline.SAST[index].File = filepath.ToSlash(clean)
 		baseline.SAST[index].Line = strings.TrimSpace(entry.Line)
 	}
 	return baseline.SAST, nil
@@ -59,9 +62,27 @@ func matchBaseline(baseline []Suppression, finding Finding) string {
 		if !strings.EqualFold(entry.Rule, finding.RuleID) || entry.File != finding.File {
 			continue
 		}
-		if entry.Line == "" || entry.Line == finding.Text {
+		if entry.Line == finding.Text {
 			return entry.Reason
 		}
 	}
 	return ""
+}
+
+// UnusedSuppressions returns baseline entries that matched no accepted finding.
+func UnusedSuppressions(baseline []Suppression, findings []Finding) []Suppression {
+	var unused []Suppression
+	for _, entry := range baseline {
+		used := false
+		for _, finding := range findings {
+			if matchBaseline([]Suppression{entry}, finding) != "" {
+				used = true
+				break
+			}
+		}
+		if !used {
+			unused = append(unused, entry)
+		}
+	}
+	return unused
 }

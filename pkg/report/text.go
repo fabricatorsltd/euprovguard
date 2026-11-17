@@ -129,6 +129,32 @@ func writeTextReport(
 		}
 	}
 
+	fmt.Fprintln(w, dash)
+	fmt.Fprintln(w, "SAST FINDINGS")
+	fmt.Fprintln(w, dash)
+	open, accepted := 0, 0
+	for _, finding := range bom.Vulnerabilities {
+		status := ""
+		for _, property := range finding.Properties {
+			if property.Name == "euprovguard:sast:status" {
+				status = property.Value
+			}
+		}
+		if status == "" {
+			continue
+		}
+		if status == "accepted" {
+			accepted++
+		} else {
+			open++
+		}
+		fmt.Fprintf(w, "  [%s] %s: %s\n    %s\n", strings.ToUpper(status), finding.ID, finding.Description, finding.Detail)
+		if status == "accepted" && finding.Analysis != nil {
+			fmt.Fprintf(w, "    Reason: %s\n", finding.Analysis.Detail)
+		}
+	}
+	fmt.Fprintf(w, "  SAST open: %d | Accepted: %d\n\n", open, accepted)
+
 	// Section 4: CRA Checklist
 	fmt.Fprintln(w, dash)
 	fmt.Fprintln(w, "4. CRA ARTICLE 13 / ANNEX I CHECKLIST")

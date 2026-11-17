@@ -78,6 +78,8 @@ type Result struct {
 	// SuppressedSAST holds the findings an inline comment or the baseline
 	// accepted, each with its reason. They are not counted by Total.
 	SuppressedSAST []scanner.Finding
+	// UnusedSuppressions are baseline entries that matched no finding.
+	UnusedSuppressions []scanner.Suppression
 	// SeverityCounts summarises Vulnerabilities by severity name.
 	SeverityCounts map[string]int
 	// EUVD is the ENISA snapshot used, when the query succeeded.
@@ -207,8 +209,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		}
 		baselinePath := opts.BaselinePath
 		if baselinePath == "" {
-			if _, err := os.Stat(filepath.Join(root, scanner.BaselineFile)); err == nil {
-				baselinePath = filepath.Join(root, scanner.BaselineFile)
+			candidate := filepath.Join(root, scanner.BaselineFile)
+			if _, err := os.Stat(candidate); err == nil {
+				baselinePath = candidate
+			} else if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("engine: baseline: %w", err)
 			}
 		}
 		var baseline []scanner.Suppression
@@ -220,6 +225,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			baseline = loaded
 		}
 		result.SAST, result.SuppressedSAST = scanner.ScanSAST(root, opts.Workers, extraRules, baseline)
+		result.UnusedSuppressions = scanner.UnusedSuppressions(baseline, result.SuppressedSAST)
+		for _, entry := range result.UnusedSuppressions {
+			warnf("unused SAST suppression: %s %s: %s", entry.Rule, entry.File, entry.Line)
+		}
 	}
 
 	// 5. Build the document and attach everything found to it.
@@ -248,7 +257,8 @@ func attachFindings(result *Result) {
 			fmt.Sprintf("comp-%d", index+1),
 		)
 	}
-	for index, finding := range result.SAST {
+	allSAST := append(append([]scanner.Finding(nil), result.SAST...), result.SuppressedSAST...)
+	for index, finding := range allSAST {
 		sbom.AddSASTFinding(result.BOM,
 			fmt.Sprintf("SAST-%03d", index+1),
 			finding.ToolName,
@@ -258,6 +268,18 @@ func attachFindings(result *Result) {
 			finding.Line,
 			finding.Severity,
 			finding.CWEs,
+		)
+		v := &result.BOM.Vulnerabilities[len(result.BOM.Vulnerabilities)-1]
+		status := "open"
+		if finding.Suppressed != "" {
+			status = "accepted"
+			v.Analysis.Response = []string{"will_not_fix"}
+			v.Analysis.Detail = finding.Suppressed
+			v.Properties = append(v.Properties, sbom.Property{Name: "euprovguard:sast:reason", Value: finding.Suppressed})
+		}
+		v.Properties = append(v.Properties,
+			sbom.Property{Name: "euprovguard:sast:status", Value: status},
+			sbom.Property{Name: "euprovguard:sast:text", Value: finding.Text},
 		)
 	}
 }

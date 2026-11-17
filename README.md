@@ -57,6 +57,7 @@ make build-all
 | `-text-report`   | ``           | Plain-text report path                               |
 | `-bundle`        | ``           | Base path for all report formats (.html, .txt)       |
 | `-sast`          | `true`       | Enable native SAST engine (CRS-enhanced)             |
+| `-fail-on-findings` | `false` | Exit 1 on open CVE/SAST findings or an incomplete scan |
 | `-baseline`      | ``           | File of accepted SAST findings (default: `.euprovguard-baseline.json`) |
 | `-verify`        | `false`      | Verify mode (requires `-input`, `-pubkey`)           |
 | `-input`         | ``           | Signed SBOM to verify                                |
@@ -156,9 +157,14 @@ the line, so it keeps matching when other lines of the file move:
 }
 ```
 
-Every entry needs a reason. Leaving `line` out accepts every finding of the rule in that
-file. Accepted findings are left out of the SBOM and of the totals; the log reports how
-many there were.
+Every entry needs a rule, a project-relative file, line text and a reason. Unused
+entries produce a warning. Accepted findings remain visible in the HTML and text
+reports and in the SBOM, with `euprovguard:sast:status=accepted` and their reason.
+Acceptance records a review decision, not a fix: the SBOM analysis stays `in_triage`
+and records `will_not_fix` with the reason. Open totals exclude accepted findings.
+
+Use `-fail-on-findings` to exit with code 1 if any open CVE or SAST finding remains,
+or if the scan is incomplete. Reports are written before the command exits.
 
 ## eIDAS QES & Legal Attribution
 

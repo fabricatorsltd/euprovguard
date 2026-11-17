@@ -47,6 +47,7 @@ func TestScanSAST_PythonBuiltinsOnly(t *testing.T) {
 			"    return sources",
 			"compile(['a.c'])",
 		}, "\n"),
+		"tool/builtins.py": "from builtins import eval\neval(data)\n",
 		"tool/c.py": strings.Join([]string{
 			"from builder import compile as build, eval",
 			"eval(x)",
@@ -55,13 +56,13 @@ func TestScanSAST_PythonBuiltinsOnly(t *testing.T) {
 	})
 	findings, _ := ScanSAST(root, 2, nil, nil)
 	got := strings.Join(locations(findings), ", ")
-	want := "INJ-001 tool/a.py:3, INJ-001 tool/a.py:4, INJ-001 tool/c.py:3"
+	want := "INJ-001 tool/a.py:3, INJ-001 tool/a.py:4, INJ-001 tool/builtins.py:2, INJ-001 tool/c.py:3"
 	if got != want {
 		t.Fatalf("findings %q, want %q", got, want)
 	}
 }
 
-func TestScanSAST_CDefinitionsAreNotCalls(t *testing.T) {
+func TestScanSAST_CRuntimeFindingsRemainReviewable(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"crt/string.c": strings.Join([]string{
 			"char *strcpy(char *to, const char *from)",
@@ -76,7 +77,7 @@ func TestScanSAST_CDefinitionsAreNotCalls(t *testing.T) {
 	})
 	findings, _ := ScanSAST(root, 1, nil, nil)
 	got := strings.Join(locations(findings), ", ")
-	want := "MEM-001 crt/string.c:5, MEM-002 crt/string.c:6, MEM-002 crt/string.c:7"
+	want := "MEM-001 crt/string.c:1, MEM-001 crt/string.c:5, MEM-002 crt/string.c:2, MEM-002 crt/string.c:3, MEM-002 crt/string.c:6, MEM-002 crt/string.c:7"
 	if got != want {
 		t.Fatalf("findings %q, want %q", got, want)
 	}
@@ -130,5 +131,54 @@ func TestLoadBaseline_RequiresReason(t *testing.T) {
 	}
 	if _, err := LoadBaseline(filepath.Join(root, "bad.json")); err == nil {
 		t.Fatal("a baseline entry without a reason was accepted")
+	}
+}
+
+func TestScanSAST_NestedDefinitionDoesNotHideBuiltin(t *testing.T) {
+	root := writeTree(t, map[string]string{"scope.py": "class Helper:\n    def eval(self, x):\n        return x\neval(data)\ncompile(\n    text, filename, 'exec')\nbuiltins.exec(data)\n"})
+	findings, _ := ScanSAST(root, 1, nil, nil)
+	if got := strings.Join(locations(findings), ", "); got != "INJ-001 scope.py:4, INJ-001 scope.py:5, INJ-001 scope.py:7" {
+		t.Fatalf("findings %q", got)
+	}
+}
+
+func TestUnusedSuppressions(t *testing.T) {
+	baseline := []Suppression{
+		{Rule: "MEM-001", File: "a.c", Line: "strcpy(a, b);", Reason: "reviewed"},
+		{Rule: "MEM-002", File: "a.c", Line: "sprintf(a, b);", Reason: "obsolete"},
+	}
+	findings := []Finding{{RuleID: "MEM-001", File: "a.c", Line: 99, Text: "strcpy(a, b);", Suppressed: "reviewed"}}
+	unused := UnusedSuppressions(baseline, findings)
+	if len(unused) != 1 || unused[0].Rule != "MEM-002" {
+		t.Fatalf("unused %+v", unused)
+	}
+	findings[0].Text = "strcpy(a, user_input);"
+	if got := UnusedSuppressions(baseline, findings); len(got) != 2 {
+		t.Fatalf("changed source reused a suppression: %+v", got)
+	}
+}
+
+func TestLoadBaseline_RejectsBroadAcceptance(t *testing.T) {
+	for _, document := range []string{
+		`{"sast":[{"rule":"MEM-001","file":"a.c","reason":"reviewed"}]}`,
+		`{"sast":[{"rule":"MEM-001","file":"../a.c","line":"strcpy(a,b);","reason":"reviewed"}]}`,
+	} {
+		root := writeTree(t, map[string]string{"baseline.json": document})
+		if _, err := LoadBaseline(filepath.Join(root, "baseline.json")); err == nil {
+			t.Fatalf("accepted unsafe baseline %s", document)
+		}
+	}
+	if got := inlineSuppression("// euprovguard:ignore MEM-001", "MEM-001"); got != "" {
+		t.Fatalf("accepted a finding without a reason: %s", got)
+	}
+}
+
+func TestScanSAST_StringCannotAcceptFinding(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"a.py": "eval('euprovguard:ignore INJ-001 trusted')\neval(data) # euprovguard:ignore INJ-001 fixed expression\n",
+	})
+	findings, accepted := ScanSAST(root, 1, nil, nil)
+	if len(findings) != 1 || findings[0].Line != 1 || len(accepted) != 1 || accepted[0].Line != 2 {
+		t.Fatalf("open %+v, accepted %+v", findings, accepted)
 	}
 }
